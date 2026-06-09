@@ -1,0 +1,16 @@
+{
+  "name": "customs-rate-mailer",
+  "version": "1.0.0",
+  "description": "관세청 환율 자동 이메일 발송기",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0",
+    "express": "^4.19.0",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.0"
+  }
+}
