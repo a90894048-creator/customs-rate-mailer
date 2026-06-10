@@ -49,7 +49,7 @@ async function fetchCustomsRates() {
     const res = await axios.get(
       'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
       {
-        params: { crkyCn: apiKey, qryYymmDd, imexTp: '1' },
+        params: { crkyCn: apiKey, qryYymmDd, imexTp: '2' }, // 2=수입
         headers: { 'User-Agent': 'Mozilla/5.0' },
         timeout: 15000,
       }
