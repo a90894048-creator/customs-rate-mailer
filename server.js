@@ -14,26 +14,26 @@ function getGmailConfig() {
   return { gmailUser: process.env.GMAIL_USER, gmailPass: process.env.GMAIL_PASS };
 }
 
-// 이메일 목록: RECIPIENT_EMAILS 환경변수(콤마 구분) 우선, 없으면 로컬 파일
-const LOCAL_EMAILS_FILE = path.join(__dirname, 'data', 'emails.json');
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-}
+// 이메일 목록: 환경변수(기본값) + 런타임 추가목록 합산
+// RECIPIENT_EMAILS=a@a.com,b@b.com 으로 기본 수신자 지정
+// UI에서 추가한 이메일은 메모리에 유지 (재시작 시 초기화되나 환경변수 목록은 유지)
+let runtimeEmails = []; // UI에서 추가된 이메일 (메모리)
 
 function loadEmails() {
-  // 환경변수 우선
-  if (process.env.RECIPIENT_EMAILS) {
-    return process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean);
-  }
-  if (!fs.existsSync(LOCAL_EMAILS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(LOCAL_EMAILS_FILE, 'utf-8'));
+  const envEmails = process.env.RECIPIENT_EMAILS
+    ? process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean)
+    : [];
+  // 중복 제거 후 합산
+  const all = [...new Set([...envEmails, ...runtimeEmails])];
+  return all;
 }
 
 function saveEmails(emails) {
-  // Railway 환경에서는 환경변수로 관리하므로 파일에도 저장 시도
-  try {
-    fs.writeFileSync(LOCAL_EMAILS_FILE, JSON.stringify(emails, null, 2));
-  } catch(e) {}
+  // 환경변수 목록을 제외한 UI 추가분만 메모리에 저장
+  const envEmails = process.env.RECIPIENT_EMAILS
+    ? process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean)
+    : [];
+  runtimeEmails = emails.filter(e => !envEmails.includes(e));
 }
 
 // 유니패스 주간환율 API 호출
@@ -221,6 +221,7 @@ cron.schedule('0 11 * * 5', () => {
 const PORT = process.env.PORT || 3099;
 app.listen(PORT, () => {
   console.log(`✅ 유니패스 환율 알림 서버 실행 중: http://localhost:${PORT}`);
-  console.log(`   데이터 경로: ${DATA_DIR}`);
   console.log('   매주 금요일 11:00 (KST) 자동 발송 예약됨');
+  const recipientCount = loadEmails().length;
+  console.log(`   수신자 ${recipientCount}명 등록됨`);
 });
