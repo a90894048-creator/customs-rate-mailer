@@ -9,34 +9,31 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// Railway Volume이 마운트된 경로 또는 로컬 데이터 폴더
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const EMAILS_FILE = path.join(DATA_DIR, 'emails.json');
-
-// Gmail 설정: 환경변수 우선, 없으면 파일 fallback
+// Gmail 설정: 환경변수에서 읽기
 function getGmailConfig() {
-  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-    return { gmailUser: process.env.GMAIL_USER, gmailPass: process.env.GMAIL_PASS };
-  }
-  const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-  if (!fs.existsSync(CONFIG_FILE)) return {};
-  return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+  return { gmailUser: process.env.GMAIL_USER, gmailPass: process.env.GMAIL_PASS };
 }
 
-function saveGmailConfig(config) {
-  const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+// 이메일 목록: RECIPIENT_EMAILS 환경변수(콤마 구분) 우선, 없으면 로컬 파일
+const LOCAL_EMAILS_FILE = path.join(__dirname, 'data', 'emails.json');
+if (!fs.existsSync(path.join(__dirname, 'data'))) {
+  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
 }
 
 function loadEmails() {
-  if (!fs.existsSync(EMAILS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(EMAILS_FILE, 'utf-8'));
+  // 환경변수 우선
+  if (process.env.RECIPIENT_EMAILS) {
+    return process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean);
+  }
+  if (!fs.existsSync(LOCAL_EMAILS_FILE)) return [];
+  return JSON.parse(fs.readFileSync(LOCAL_EMAILS_FILE, 'utf-8'));
 }
 
 function saveEmails(emails) {
-  fs.writeFileSync(EMAILS_FILE, JSON.stringify(emails, null, 2));
+  // Railway 환경에서는 환경변수로 관리하므로 파일에도 저장 시도
+  try {
+    fs.writeFileSync(LOCAL_EMAILS_FILE, JSON.stringify(emails, null, 2));
+  } catch(e) {}
 }
 
 // 유니패스 주간환율 API 호출
@@ -198,19 +195,11 @@ app.delete('/api/emails/:email', (req, res) => {
 
 app.get('/api/config', (req, res) => {
   const c = getGmailConfig();
-  // 환경변수로 설정된 경우 UI에서 수정 불가 표시
-  const fromEnv = !!(process.env.GMAIL_USER && process.env.GMAIL_PASS);
-  res.json({ gmailUser: c.gmailUser || '', hasPass: !!c.gmailPass, fromEnv });
+  res.json({ gmailUser: c.gmailUser || '', hasPass: !!c.gmailPass, fromEnv: true });
 });
 
 app.post('/api/config', (req, res) => {
-  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-    return res.status(400).json({ error: '환경변수로 설정됨. Railway 대시보드에서 변경하세요.' });
-  }
-  const { gmailUser, gmailPass } = req.body;
-  if (!gmailUser || !gmailPass) return res.status(400).json({ error: '필수값 누락' });
-  saveGmailConfig({ gmailUser, gmailPass });
-  res.json({ ok: true });
+  res.status(400).json({ error: 'Railway 대시보드 Variables에서 GMAIL_USER, GMAIL_PASS를 변경하세요.' });
 });
 
 app.post('/api/send-now', async (req, res) => {

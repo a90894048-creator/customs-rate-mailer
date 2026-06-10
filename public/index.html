@@ -150,6 +150,10 @@
 <!-- 수신자 관리 -->
 <div class="card">
   <h2>📧 수신자 이메일 목록</h2>
+  <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:12px;">
+    💡 Railway 배포 환경에서는 <strong>Railway 대시보드 → Variables → RECIPIENT_EMAILS</strong> 에 콤마(,)로 구분해서 입력하세요.<br>
+    예: <code>a@gmail.com,b@gmail.com</code>
+  </div>
   <div class="row">
     <input type="email" id="newEmail" placeholder="추가할 이메일 주소" onkeydown="if(event.key==='Enter')addEmail()" />
     <button class="btn-primary" onclick="addEmail()">추가</button>
