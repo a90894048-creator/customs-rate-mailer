@@ -94,8 +94,13 @@ async function fetchRatesFromUnipass() {
   const mm = String(today.getMonth() + 1).padStart(2, '0');
   const dd = String(today.getDate()).padStart(2, '0');
   const qryYymmDd = `${yyyy}${mm}${dd}`;
-  const apiKey = process.env.UNIPASS_API_KEY;
-  if (!apiKey) throw new Error('UNIPASS_API_KEY 환경변수가 설정되지 않았습니다');
+  let apiKey = process.env.UNIPASS_API_KEY;
+  if (!apiKey && fs.existsSync(CONFIG_FILE)) {
+    try {
+      apiKey = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')).unipassApiKey;
+    } catch (e) {}
+  }
+  if (!apiKey) throw new Error('유니패스 인증키가 설정되지 않았습니다 (UNIPASS_API_KEY)');
 
   const res = await axios.get(
     'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
@@ -117,12 +122,17 @@ async function fetchRatesFromUnipass() {
     const block = xml.match(blockRegex)?.[0];
     if (block) {
       const fxrt = block.match(/<fxrt>([\d.]+)<\/fxrt>/)?.[1];
-      const aplyBgnDt = block.match(/<aplyBgnDt>(\d+)<\/aplyBgnDt>/)?.[1];
+      const aplyBgnDt = block.match(/<aplyBgnDt>(\d+)<\/aplyBgnDt>/)?.[1] || qryYymmDd;
       if (fxrt) {
+        // 적용기간: 시작일(일요일)부터 6일 후(토요일)까지
+        const fromDate = `${aplyBgnDt.slice(0, 4)}-${aplyBgnDt.slice(4, 6)}-${aplyBgnDt.slice(6, 8)}`;
+        const end = new Date(`${fromDate}T00:00:00+09:00`);
+        end.setDate(end.getDate() + 6);
+        const toDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
         rates[code] = {
           rate: parseFloat(fxrt),
           change: null,
-          period: { from: aplyBgnDt || qryYymmDd },
+          period: { from: fromDate, to: toDate },
         };
       }
     }
@@ -131,18 +141,8 @@ async function fetchRatesFromUnipass() {
   return Object.keys(rates).length > 0 ? rates : null;
 }
 
-// 환율 조회: CLHS 우선, 실패 시 유니패스
+// 환율 조회: 유니패스 공식 API 우선, 실패 시 CLHS
 async function fetchCustomsRates() {
-  try {
-    const rates = await fetchRatesFromClhs();
-    if (rates) {
-      console.log('환율 조회 성공 (CLHS)');
-      return rates;
-    }
-  } catch (err) {
-    console.error('CLHS 환율 조회 실패:', err.message);
-  }
-
   try {
     const rates = await fetchRatesFromUnipass();
     if (rates) {
@@ -151,6 +151,16 @@ async function fetchCustomsRates() {
     }
   } catch (err) {
     console.error('유니패스 환율 조회 실패:', err.message);
+  }
+
+  try {
+    const rates = await fetchRatesFromClhs();
+    if (rates) {
+      console.log('환율 조회 성공 (CLHS)');
+      return rates;
+    }
+  } catch (err) {
+    console.error('CLHS 환율 조회 실패:', err.message);
   }
 
   return null;
@@ -300,18 +310,39 @@ app.delete('/api/emails/:email', (req, res) => {
   res.json({ ok: true, emails: loadEmails() });
 });
 
+function readConfigFile() {
+  if (fs.existsSync(CONFIG_FILE)) {
+    try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')); } catch (e) {}
+  }
+  return {};
+}
+
 app.get('/api/config', (req, res) => {
   const c = getGmailConfig();
-  res.json({ gmailUser: c.gmailUser || '', hasPass: !!c.gmailPass, fromEnv: c.fromEnv });
+  const file = readConfigFile();
+  res.json({
+    gmailUser: c.gmailUser || '',
+    hasPass: !!c.gmailPass,
+    fromEnv: c.fromEnv,
+    hasUnipassKey: !!(process.env.UNIPASS_API_KEY || file.unipassApiKey),
+  });
 });
 
 app.post('/api/config', (req, res) => {
-  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-    return res.status(400).json({ error: '환경변수로 설정되어 있어 UI에서 변경할 수 없습니다.' });
+  const { gmailUser, gmailPass, unipassApiKey } = req.body;
+  const current = readConfigFile();
+
+  if (gmailUser || gmailPass) {
+    if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+      return res.status(400).json({ error: 'Gmail은 환경변수로 설정되어 있어 UI에서 변경할 수 없습니다.' });
+    }
+    if (!gmailUser || !gmailPass) return res.status(400).json({ error: 'Gmail 주소와 앱 비밀번호를 모두 입력하세요.' });
+    current.gmailUser = gmailUser;
+    current.gmailPass = gmailPass;
   }
-  const { gmailUser, gmailPass } = req.body;
-  if (!gmailUser || !gmailPass) return res.status(400).json({ error: '필수값 누락' });
-  saveGmailConfig({ gmailUser, gmailPass });
+  if (unipassApiKey) current.unipassApiKey = unipassApiKey;
+
+  saveGmailConfig(current);
   res.json({ ok: true });
 });
 
