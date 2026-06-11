@@ -46,10 +46,10 @@ Get-ChildItem $src.FullName | Where-Object { $_.Name -ne "data" } | ForEach-Obje
 Remove-Item $tmpZip -Force
 Remove-Item $tmpDir -Recurse -Force
 
-# 4. 의존성 설치
+# 4. 의존성 설치 (npm.cmd 직접 호출 — PowerShell 실행 정책 우회)
 Write-Host "[4/5] 패키지 설치 중 (1~2분)..." -ForegroundColor Cyan
 Push-Location $AppDir
-npm install --omit=dev --silent
+& npm.cmd install --omit=dev --silent
 Pop-Location
 
 # 5. 자동 시작 등록 (로그온 시 백그라운드 실행)
