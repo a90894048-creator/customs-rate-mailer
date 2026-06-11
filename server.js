@@ -94,7 +94,8 @@ async function fetchRatesFromUnipass() {
   const mm = String(today.getMonth() + 1).padStart(2, '0');
   const dd = String(today.getDate()).padStart(2, '0');
   const qryYymmDd = `${yyyy}${mm}${dd}`;
-  const apiKey = process.env.UNIPASS_API_KEY || 'm280g235n180u270b050q000h0';
+  const apiKey = process.env.UNIPASS_API_KEY;
+  if (!apiKey) throw new Error('UNIPASS_API_KEY 환경변수가 설정되지 않았습니다');
 
   const res = await axios.get(
     'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
