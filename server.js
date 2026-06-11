@@ -207,23 +207,55 @@ async function sendRateMail() {
   const now = new Date();
   const dateLabel = now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
 
+  const subject = `[환율] ${dateLabel} 관세청 주간 환율`;
+  const html = buildEmailHtml(rates, dateLabel);
+
+  // 1순위: Brevo HTTP API (Railway 등 SMTP 차단 환경에서도 동작)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      await axios.post(
+        'https://api.brevo.com/v3/smtp/email',
+        {
+          sender: { name: '관세청 환율 알림', email: config.gmailUser },
+          to: emails.map(e => ({ email: e })),
+          subject,
+          htmlContent: html,
+        },
+        {
+          headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' },
+          timeout: 30000,
+        }
+      );
+      console.log(`[${new Date().toLocaleString()}] 이메일 발송 완료 (Brevo) → ${emails.length}명`);
+      return { ok: true, rates, recipients: emails.length };
+    } catch (err) {
+      const detail = err.response?.data?.message || err.message;
+      console.error('Brevo 발송 실패:', detail);
+      return { ok: false, error: `Brevo 발송 실패: ${detail}` };
+    }
+  }
+
+  // 2순위: Gmail SMTP (로컬/SMTP 허용 환경)
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: config.gmailUser, pass: config.gmailPass },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
 
   try {
     await transporter.sendMail({
-      from: `"유니패스 환율 알림" <${config.gmailUser}>`,
+      from: `"관세청 환율 알림" <${config.gmailUser}>`,
       to: emails.join(', '),
-      subject: `[환율] ${dateLabel} 유니패스 주간 환율`,
-      html: buildEmailHtml(rates, dateLabel),
+      subject,
+      html,
     });
-    console.log(`[${new Date().toLocaleString()}] 이메일 발송 완료 → ${emails.length}명`);
+    console.log(`[${new Date().toLocaleString()}] 이메일 발송 완료 (Gmail) → ${emails.length}명`);
     return { ok: true, rates, recipients: emails.length };
   } catch (err) {
     console.error('메일 발송 실패:', err.message);
-    return { ok: false, error: err.message };
+    return { ok: false, error: `Gmail SMTP 실패: ${err.message} (Railway에서는 SMTP가 차단되므로 BREVO_API_KEY 설정 필요)` };
   }
 }
 
