@@ -206,12 +206,17 @@ function buildEmailHtml(rates, dateLabel) {
     const unit = `1${c}`;
     // 소수점: 환율이 100 미만(JPY 등)이면 4자리, 그 외 2자리
     const decimals = d.rate < 100 ? 4 : 2;
+    // 전주대비: 전주환율 (▲등락액) 형식
+    const prevStr = d.prev != null ? Number(d.prev).toLocaleString('ko-KR', { maximumFractionDigits: 4 }) : '';
+    const changeCell = changeNum != null && d.prev != null
+      ? `${prevStr} <span style="color:${changeColor};">(${arrow} ${Math.abs(changeNum).toFixed(decimals)})</span>`
+      : '';
     return `
       <tr style="border-bottom:1px solid #f1f5f9;">
         <td style="padding:12px 20px;font-weight:bold;font-size:16px;width:70px;">${c}</td>
         <td style="padding:12px 20px;font-size:13px;color:#64748b;">${unit}</td>
         <td style="padding:12px 20px;text-align:right;font-size:16px;color:#1a56db;font-weight:600;">${Number(d.rate).toLocaleString('ko-KR', { maximumFractionDigits: 4 })} 원</td>
-        <td style="padding:12px 20px;text-align:right;font-size:13px;color:${changeColor};">${changeNum != null ? `${arrow} ${Math.abs(changeNum).toFixed(decimals)}` : ''}</td>
+        <td style="padding:12px 20px;text-align:right;font-size:13px;color:#475569;">${changeCell}</td>
       </tr>`;
   }).join('');
 

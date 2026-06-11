@@ -186,8 +186,9 @@
         const arrow = changeNum == null ? '' : changeNum > 0 ? '▲' : changeNum < 0 ? '▼' : '–';
         const color = changeNum == null || changeNum === 0 ? '#888' : changeNum > 0 ? '#ef4444' : '#3b82f6';
         const decimals = d && d.rate < 100 ? 4 : 2;
-        const changeHtml = changeNum != null
-          ? `<div style="font-size:11px;color:${color};margin-top:3px;">${arrow} ${Math.abs(changeNum).toFixed(decimals)} 전주대비</div>`
+        const prevStr = d && d.prev != null ? Number(d.prev).toLocaleString('ko-KR', { maximumFractionDigits: 4 }) : '';
+        const changeHtml = changeNum != null && prevStr
+          ? `<div style="font-size:11px;color:#64748b;margin-top:3px;">전주 ${prevStr} <span style="color:${color};">(${arrow} ${Math.abs(changeNum).toFixed(decimals)})</span></div>`
           : '';
         boxes[i].innerHTML = d ? `
           <div class="currency">${c}</div>
