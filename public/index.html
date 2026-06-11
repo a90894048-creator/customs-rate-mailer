@@ -143,6 +143,9 @@
   <input type="email" id="gmailUser" placeholder="example@gmail.com" />
   <label>앱 비밀번호 <span style="font-size:11px;color:#94a3b8;">(Gmail → 2단계 인증 → 앱 비밀번호)</span></label>
   <input type="password" id="gmailPass" placeholder="앱 비밀번호 16자리" />
+  <div id="savedBadge" style="display:none;background:#d1fae5;color:#065f46;border-radius:7px;padding:8px 12px;font-size:13px;margin-bottom:10px;">
+    ✅ Gmail 계정·앱 비밀번호가 저장되어 있습니다. 변경할 때만 다시 입력하세요.
+  </div>
   <button class="btn-primary" onclick="saveConfig()">저장</button>
   <div id="configMsg" class="status-msg"></div>
 </div>
@@ -207,12 +210,16 @@
     const user = document.getElementById('gmailUser').value.trim();
     const pass = document.getElementById('gmailPass').value.trim();
     if (!user || !pass) return showMsg('configMsg', '이메일과 비밀번호를 모두 입력하세요.', true);
+    if (pass === PASS_MASK) {
+      return showMsg('configMsg', '이미 저장되어 있습니다. 비밀번호를 바꾸려면 새 값을 입력하세요.', false);
+    }
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gmailUser: user, gmailPass: pass })
     }).then(r => r.json());
     showMsg('configMsg', res.ok ? '✅ 저장 완료' : res.error, !res.ok);
+    if (res.ok) loadConfig();
   }
 
   async function loadEmails() {
@@ -265,10 +272,16 @@
     setTimeout(() => { el.style.display = 'none'; }, 4000);
   }
 
+  const PASS_MASK = '****************';
+
   async function loadConfig() {
     const c = await fetch('/api/config').then(r => r.json());
     if (c.gmailUser) document.getElementById('gmailUser').value = c.gmailUser;
-    if (c.hasPass) document.getElementById('gmailPass').placeholder = '저장된 비밀번호 있음';
+    if (c.hasPass) {
+      // 저장된 비밀번호가 있으면 마스킹된 값으로 채워서 표시
+      document.getElementById('gmailPass').value = PASS_MASK;
+      document.getElementById('savedBadge').style.display = 'block';
+    }
   }
 
   loadConfig();
