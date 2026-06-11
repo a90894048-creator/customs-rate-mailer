@@ -101,6 +101,27 @@ function formatYmd(date) {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// 조회 기준일 결정:
+// - 금/토요일: 다음주 환율(다가오는 일요일부터 적용)이 이미 고시되므로 다음주 일요일 기준으로 조회
+// - 그 외: 오늘 기준 (이번주 환율)
+function getTargetDate() {
+  const now = new Date();
+  const day = now.getDay(); // 0=일 ... 5=금 6=토
+  if (day === 5 || day === 6) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + (7 - day)); // 다가오는 일요일
+    return d;
+  }
+  return now;
+}
+
+// 기준일이 속한 주의 일요일 (적용개시일) — YYYY-MM-DD
+function getWeekStart(date) {
+  const d = new Date(date);
+  d.setDate(d.getDate() - d.getDay());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // 유니패스에서 특정 날짜 기준 환율 조회
 async function fetchUnipassRatesForDate(apiKey, qryYymmDd) {
   const res = await axios.get(
@@ -133,17 +154,18 @@ async function fetchUnipassRatesForDate(apiKey, qryYymmDd) {
   return rates;
 }
 
-// 2순위(fallback): 유니패스 오픈API — 이번주 + 지난주 조회로 전주대비 계산
+// 1순위: 유니패스 오픈API — 기준주 + 직전주 조회로 전주대비 계산
+// (금/토요일에는 다음주 환율을 조회하고, 직전주 = 이번주가 됨)
 async function fetchRatesFromUnipass() {
   const apiKey = getUnipassApiKey();
   if (!apiKey) throw new Error('유니패스 인증키가 설정되지 않았습니다 (UNIPASS_API_KEY)');
 
-  const today = new Date();
-  const lastWeek = new Date(today);
+  const target = getTargetDate();
+  const lastWeek = new Date(target);
   lastWeek.setDate(lastWeek.getDate() - 7);
 
   const [thisWeek, prevWeek] = await Promise.all([
-    fetchUnipassRatesForDate(apiKey, formatYmd(today)),
+    fetchUnipassRatesForDate(apiKey, formatYmd(target)),
     fetchUnipassRatesForDate(apiKey, formatYmd(lastWeek)).catch(() => ({})),
   ]);
 
@@ -265,6 +287,14 @@ async function sendRateMail() {
 
   const rates = await fetchCustomsRates();
   if (!rates) return { ok: false, error: '환율 데이터를 가져오지 못했습니다.' };
+
+  // 기준주 검증: 금/토요일에는 다음주 환율이어야 함 (고시 전이면 발송 보류)
+  const expectedFrom = getWeekStart(getTargetDate());
+  const actualFrom = rates['USD']?.period?.from;
+  if (actualFrom && actualFrom !== expectedFrom) {
+    console.log(`다음주 환율 미고시 (기대: ${expectedFrom}, 조회됨: ${actualFrom})`);
+    return { ok: false, notYet: true, error: `다음주 환율이 아직 고시되지 않았습니다 (${expectedFrom}부터 적용분). 고시되면 자동 재시도합니다.` };
+  }
 
   const now = new Date();
   const dateLabel = now.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
@@ -389,10 +419,25 @@ app.get('/api/rates', async (req, res) => {
   res.json(rates || {});
 });
 
+// 금요일 발송: 다음주 환율이 아직 고시 전이면 30분 간격으로 재시도 (최대 14회 = 7시간)
+async function sendRateMailWithRetry(attempt = 1) {
+  const result = await sendRateMail();
+  if (result.ok) {
+    console.log('[CRON] 발송 성공');
+    return;
+  }
+  if (attempt >= 14) {
+    console.error(`[CRON] ${attempt}회 시도 후에도 발송 실패: ${result.error}`);
+    return;
+  }
+  console.log(`[CRON] 발송 보류 (${result.error}) — 30분 후 재시도 (${attempt}/14)`);
+  setTimeout(() => sendRateMailWithRetry(attempt + 1), 30 * 60 * 1000);
+}
+
 // 매주 금요일 11:00 KST
 cron.schedule('0 11 * * 5', () => {
-  console.log('[CRON] 금요일 11시 - 환율 메일 발송 시작');
-  sendRateMail();
+  console.log('[CRON] 금요일 11시 - 다음주 환율 메일 발송 시작');
+  sendRateMailWithRetry();
 }, { timezone: 'Asia/Seoul' });
 
 const PORT = process.env.PORT || 3099;
