@@ -46,11 +46,13 @@ Get-ChildItem $src.FullName | Where-Object { $_.Name -ne "data" } | ForEach-Obje
 Remove-Item $tmpZip -Force
 Remove-Item $tmpDir -Recurse -Force
 
-# 4. 의존성 설치 (npm.cmd 직접 호출 — PowerShell 실행 정책 우회)
+# 4. 의존성 설치 (cmd 경유 — PowerShell 실행 정책과 무관하게 동작)
 Write-Host "[4/5] 패키지 설치 중 (1~2분)..." -ForegroundColor Cyan
-Push-Location $AppDir
-& npm.cmd install --omit=dev --silent
-Pop-Location
+cmd /c "cd /d `"$AppDir`" && npm install --omit=dev"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "패키지 설치 실패. 인터넷 연결을 확인하고 다시 실행해주세요." -ForegroundColor Red
+    exit 1
+}
 
 # 5. 자동 시작 등록 (로그온 시 백그라운드 실행)
 Write-Host "[5/5] 자동 시작 등록 중..." -ForegroundColor Cyan
