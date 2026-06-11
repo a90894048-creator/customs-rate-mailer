@@ -36,8 +36,41 @@ function saveEmails(emails) {
   runtimeEmails = emails.filter(e => !envEmails.includes(e));
 }
 
-// 유니패스 오픈API 주간환율 조회 (포트 38010, 해외 접근 가능)
-async function fetchCustomsRates() {
+// 1순위: CLHS(clhs.co.kr) 통관환율 페이지 — 관세청 과세환율과 동일 수치, 해외 접근 가능
+async function fetchRatesFromClhs() {
+  const res = await axios.get('https://www.clhs.co.kr/exchange.asp', {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+    responseType: 'arraybuffer',
+    timeout: 15000,
+  });
+  // 페이지가 EUC-KR 인코딩이지만 통화코드·숫자는 ASCII라 그대로 파싱 가능
+  const html = new TextDecoder('euc-kr').decode(res.data);
+
+  const periodMatch = html.match(/적용기간\s*:\s*(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})/);
+  const period = periodMatch ? { from: periodMatch[1], to: periodMatch[2] } : null;
+
+  const rates = {};
+  ['USD', 'CNY', 'JPY', 'EUR'].forEach(code => {
+    // 통화 행: cur=USD 링크 뒤에 수출환율(#669900), 과세환율(#FF4646) 순서
+    const rowRegex = new RegExp(
+      `cur=${code}"[\\s\\S]{0,800}?#669900">([\\d.]+)<[\\s\\S]{0,300}?#FF4646">([\\d.]+)<`
+    );
+    const m = html.match(rowRegex);
+    if (m) {
+      rates[code] = {
+        rate: parseFloat(m[2]), // 과세환율(수입)
+        exportRate: parseFloat(m[1]),
+        change: null,
+        period,
+      };
+    }
+  });
+
+  return Object.keys(rates).length > 0 ? rates : null;
+}
+
+// 2순위(fallback): 유니패스 오픈API (포트 38010, 한국 IP에서만 접근 가능)
+async function fetchRatesFromUnipass() {
   const today = new Date();
   const yyyy = today.getFullYear();
   const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -45,49 +78,63 @@ async function fetchCustomsRates() {
   const qryYymmDd = `${yyyy}${mm}${dd}`;
   const apiKey = process.env.UNIPASS_API_KEY || 'm280g235n180u270b050q000h0';
 
-  try {
-    const res = await axios.get(
-      'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
-      {
-        params: { crkyCn: apiKey, qryYymmDd, imexTp: '2' }, // 2=수입
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 15000,
-      }
+  const res = await axios.get(
+    'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
+    {
+      params: { crkyCn: apiKey, qryYymmDd, imexTp: '2' }, // 2=수입
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 15000,
+    }
+  );
+
+  const xml = res.data;
+  const rates = {};
+
+  ['USD', 'CNY', 'JPY', 'EUR'].forEach(code => {
+    const blockRegex = new RegExp(
+      `<trifFxrtInfoQryRsltVo>(?:(?!<trifFxrtInfoQryRsltVo>).)*?<currSgn>${code}</currSgn>(?:(?!<trifFxrtInfoQryRsltVo>).)*?</trifFxrtInfoQryRsltVo>`,
+      's'
     );
-
-    // XML 파싱
-    const xml = res.data;
-    const rates = {};
-
-    ['USD', 'CNY', 'JPY', 'EUR'].forEach(code => {
-      const regex = new RegExp(
-        `<currSgn>${code}</currSgn>.*?<fxrt>([\\d.]+)</fxrt>|<fxrt>([\\d.]+)</fxrt>.*?<currSgn>${code}</currSgn>`,
-        's'
-      );
-      // 해당 통화 블록 파싱
-      const blockRegex = new RegExp(
-        `<trifFxrtInfoQryRsltVo>(?:(?!<trifFxrtInfoQryRsltVo>).)*?<currSgn>${code}</currSgn>(?:(?!<trifFxrtInfoQryRsltVo>).)*?</trifFxrtInfoQryRsltVo>`,
-        's'
-      );
-      const block = xml.match(blockRegex)?.[0];
-      if (block) {
-        const fxrt = block.match(/<fxrt>([\d.]+)<\/fxrt>/)?.[1];
-        const aplyBgnDt = block.match(/<aplyBgnDt>(\d+)<\/aplyBgnDt>/)?.[1];
-        if (fxrt) {
-          rates[code] = {
-            rate: parseFloat(fxrt),
-            change: null,
-            period: { from: aplyBgnDt || qryYymmDd },
-          };
-        }
+    const block = xml.match(blockRegex)?.[0];
+    if (block) {
+      const fxrt = block.match(/<fxrt>([\d.]+)<\/fxrt>/)?.[1];
+      const aplyBgnDt = block.match(/<aplyBgnDt>(\d+)<\/aplyBgnDt>/)?.[1];
+      if (fxrt) {
+        rates[code] = {
+          rate: parseFloat(fxrt),
+          change: null,
+          period: { from: aplyBgnDt || qryYymmDd },
+        };
       }
-    });
+    }
+  });
 
-    return Object.keys(rates).length > 0 ? rates : null;
+  return Object.keys(rates).length > 0 ? rates : null;
+}
+
+// 환율 조회: CLHS 우선, 실패 시 유니패스
+async function fetchCustomsRates() {
+  try {
+    const rates = await fetchRatesFromClhs();
+    if (rates) {
+      console.log('환율 조회 성공 (CLHS)');
+      return rates;
+    }
   } catch (err) {
-    console.error('유니패스 오픈API 환율 조회 실패:', err.message);
-    return null;
+    console.error('CLHS 환율 조회 실패:', err.message);
   }
+
+  try {
+    const rates = await fetchRatesFromUnipass();
+    if (rates) {
+      console.log('환율 조회 성공 (유니패스)');
+      return rates;
+    }
+  } catch (err) {
+    console.error('유니패스 환율 조회 실패:', err.message);
+  }
+
+  return null;
 }
 
 // 환율 이메일 HTML 생성
