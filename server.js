@@ -9,31 +9,49 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// Gmail 설정: 환경변수에서 읽기
+// 데이터 폴더 (설정·수신자 목록 영구 저장)
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const EMAILS_FILE = path.join(DATA_DIR, 'emails.json');
+
+// Gmail 설정: 환경변수 우선, 없으면 로컬 파일(UI에서 저장)
 function getGmailConfig() {
-  return { gmailUser: process.env.GMAIL_USER, gmailPass: process.env.GMAIL_PASS };
+  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+    return { gmailUser: process.env.GMAIL_USER, gmailPass: process.env.GMAIL_PASS, fromEnv: true };
+  }
+  if (fs.existsSync(CONFIG_FILE)) {
+    try {
+      return { ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')), fromEnv: false };
+    } catch (e) {}
+  }
+  return { fromEnv: false };
 }
 
-// 이메일 목록: 환경변수(기본값) + 런타임 추가목록 합산
-// RECIPIENT_EMAILS=a@a.com,b@b.com 으로 기본 수신자 지정
-// UI에서 추가한 이메일은 메모리에 유지 (재시작 시 초기화되나 환경변수 목록은 유지)
-let runtimeEmails = []; // UI에서 추가된 이메일 (메모리)
+function saveGmailConfig(config) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
 
+// 이메일 목록: 환경변수(RECIPIENT_EMAILS) + 로컬 파일 합산
 function loadEmails() {
   const envEmails = process.env.RECIPIENT_EMAILS
     ? process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean)
     : [];
-  // 중복 제거 후 합산
-  const all = [...new Set([...envEmails, ...runtimeEmails])];
-  return all;
+  let fileEmails = [];
+  if (fs.existsSync(EMAILS_FILE)) {
+    try {
+      fileEmails = JSON.parse(fs.readFileSync(EMAILS_FILE, 'utf-8'));
+    } catch (e) {}
+  }
+  return [...new Set([...envEmails, ...fileEmails])];
 }
 
 function saveEmails(emails) {
-  // 환경변수 목록을 제외한 UI 추가분만 메모리에 저장
   const envEmails = process.env.RECIPIENT_EMAILS
     ? process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean)
     : [];
-  runtimeEmails = emails.filter(e => !envEmails.includes(e));
+  // 환경변수 목록 제외한 나머지를 파일에 저장
+  fs.writeFileSync(EMAILS_FILE, JSON.stringify(emails.filter(e => !envEmails.includes(e)), null, 2));
 }
 
 // 1순위: CLHS(clhs.co.kr) 통관환율 페이지 — 관세청 과세환율과 동일 수치, 해외 접근 가능
@@ -283,11 +301,17 @@ app.delete('/api/emails/:email', (req, res) => {
 
 app.get('/api/config', (req, res) => {
   const c = getGmailConfig();
-  res.json({ gmailUser: c.gmailUser || '', hasPass: !!c.gmailPass, fromEnv: true });
+  res.json({ gmailUser: c.gmailUser || '', hasPass: !!c.gmailPass, fromEnv: c.fromEnv });
 });
 
 app.post('/api/config', (req, res) => {
-  res.status(400).json({ error: 'Railway 대시보드 Variables에서 GMAIL_USER, GMAIL_PASS를 변경하세요.' });
+  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+    return res.status(400).json({ error: '환경변수로 설정되어 있어 UI에서 변경할 수 없습니다.' });
+  }
+  const { gmailUser, gmailPass } = req.body;
+  if (!gmailUser || !gmailPass) return res.status(400).json({ error: '필수값 누락' });
+  saveGmailConfig({ gmailUser, gmailPass });
+  res.json({ ok: true });
 });
 
 app.post('/api/send-now', async (req, res) => {
