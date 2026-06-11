@@ -181,15 +181,19 @@
       const boxes = grid.querySelectorAll('.rate-box');
       currencies.forEach((c, i) => {
         const d = data[c];
-        const unit = c === 'JPY' ? '100엔' : `1${c}`;
-        const changeNum = d ? parseFloat(d.change) : 0;
-        const arrow = changeNum > 0 ? '▲' : changeNum < 0 ? '▼' : '–';
-        const color = changeNum > 0 ? '#ef4444' : changeNum < 0 ? '#3b82f6' : '#888';
+        const unit = `1${c}`;
+        const changeNum = d && d.change != null ? parseFloat(d.change) : null;
+        const arrow = changeNum == null ? '' : changeNum > 0 ? '▲' : changeNum < 0 ? '▼' : '–';
+        const color = changeNum == null || changeNum === 0 ? '#888' : changeNum > 0 ? '#ef4444' : '#3b82f6';
+        const decimals = d && d.rate < 100 ? 4 : 2;
+        const changeHtml = changeNum != null
+          ? `<div style="font-size:11px;color:${color};margin-top:3px;">${arrow} ${Math.abs(changeNum).toFixed(decimals)} 전주대비</div>`
+          : '';
         boxes[i].innerHTML = d ? `
           <div class="currency">${c}</div>
-          <div class="value">${Number(d.rate).toLocaleString()}</div>
+          <div class="value">${Number(d.rate).toLocaleString('ko-KR', { maximumFractionDigits: 4 })}</div>
           <div class="unit">${unit} = 원</div>
-          <div style="font-size:11px;color:${color};margin-top:3px;">${arrow} ${Math.abs(changeNum).toFixed(2)} 전주대비</div>`
+          ${changeHtml}`
         : `<div class="currency">${c}</div><div class="value">-</div><div class="unit">데이터 없음</div>`;
       });
     } catch(e) {

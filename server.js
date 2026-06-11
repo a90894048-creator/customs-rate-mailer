@@ -87,25 +87,26 @@ async function fetchRatesFromClhs() {
   return Object.keys(rates).length > 0 ? rates : null;
 }
 
-// 2순위(fallback): 유니패스 오픈API (포트 38010, 한국 IP에서만 접근 가능)
-async function fetchRatesFromUnipass() {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
-  const qryYymmDd = `${yyyy}${mm}${dd}`;
+function getUnipassApiKey() {
   let apiKey = process.env.UNIPASS_API_KEY;
   if (!apiKey && fs.existsSync(CONFIG_FILE)) {
     try {
       apiKey = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')).unipassApiKey;
     } catch (e) {}
   }
-  if (!apiKey) throw new Error('유니패스 인증키가 설정되지 않았습니다 (UNIPASS_API_KEY)');
+  return apiKey;
+}
 
+function formatYmd(date) {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// 유니패스에서 특정 날짜 기준 환율 조회
+async function fetchUnipassRatesForDate(apiKey, qryYymmDd) {
   const res = await axios.get(
     'https://unipass.customs.go.kr:38010/ext/rest/trifFxrtInfoQry/retrieveTrifFxrtInfo',
     {
-      params: { crkyCn: apiKey, qryYymmDd, imexTp: '2' }, // 2=수입
+      params: { crkyCn: apiKey, qryYymmDd, imexTp: '2' }, // 2=수입(과세환율)
       headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 15000,
     }
@@ -124,18 +125,43 @@ async function fetchRatesFromUnipass() {
       const fxrt = block.match(/<fxrt>([\d.]+)<\/fxrt>/)?.[1];
       const aplyBgnDt = block.match(/<aplyBgnDt>(\d+)<\/aplyBgnDt>/)?.[1] || qryYymmDd;
       if (fxrt) {
-        // 적용기간: 시작일(일요일)부터 6일 후(토요일)까지
-        const fromDate = `${aplyBgnDt.slice(0, 4)}-${aplyBgnDt.slice(4, 6)}-${aplyBgnDt.slice(6, 8)}`;
-        const end = new Date(`${fromDate}T00:00:00+09:00`);
-        end.setDate(end.getDate() + 6);
-        const toDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
-        rates[code] = {
-          rate: parseFloat(fxrt),
-          change: null,
-          period: { from: fromDate, to: toDate },
-        };
+        rates[code] = { rate: parseFloat(fxrt), aplyBgnDt };
       }
     }
+  });
+
+  return rates;
+}
+
+// 2순위(fallback): 유니패스 오픈API — 이번주 + 지난주 조회로 전주대비 계산
+async function fetchRatesFromUnipass() {
+  const apiKey = getUnipassApiKey();
+  if (!apiKey) throw new Error('유니패스 인증키가 설정되지 않았습니다 (UNIPASS_API_KEY)');
+
+  const today = new Date();
+  const lastWeek = new Date(today);
+  lastWeek.setDate(lastWeek.getDate() - 7);
+
+  const [thisWeek, prevWeek] = await Promise.all([
+    fetchUnipassRatesForDate(apiKey, formatYmd(today)),
+    fetchUnipassRatesForDate(apiKey, formatYmd(lastWeek)).catch(() => ({})),
+  ]);
+
+  const rates = {};
+  Object.entries(thisWeek).forEach(([code, cur]) => {
+    // 적용기간: 시작일(일요일)부터 6일 후(토요일)까지
+    const fromDate = `${cur.aplyBgnDt.slice(0, 4)}-${cur.aplyBgnDt.slice(4, 6)}-${cur.aplyBgnDt.slice(6, 8)}`;
+    const end = new Date(`${fromDate}T00:00:00+09:00`);
+    end.setDate(end.getDate() + 6);
+    const toDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+
+    const prev = prevWeek[code]?.rate;
+    rates[code] = {
+      rate: cur.rate,
+      prev: prev ?? null,
+      change: prev != null ? +(cur.rate - prev).toFixed(4) : null,
+      period: { from: fromDate, to: toDate },
+    };
   });
 
   return Object.keys(rates).length > 0 ? rates : null;
@@ -177,13 +203,15 @@ function buildEmailHtml(rates, dateLabel) {
     const changeNum = d.change != null ? parseFloat(d.change) : null;
     const arrow = changeNum == null ? '' : changeNum > 0 ? '▲' : changeNum < 0 ? '▼' : '–';
     const changeColor = changeNum == null || changeNum === 0 ? '#888' : changeNum > 0 ? '#ef4444' : '#3b82f6';
-    const unit = c === 'JPY' ? '100엔' : `1${c}`;
+    const unit = `1${c}`;
+    // 소수점: 환율이 100 미만(JPY 등)이면 4자리, 그 외 2자리
+    const decimals = d.rate < 100 ? 4 : 2;
     return `
       <tr style="border-bottom:1px solid #f1f5f9;">
         <td style="padding:12px 20px;font-weight:bold;font-size:16px;width:70px;">${c}</td>
         <td style="padding:12px 20px;font-size:13px;color:#64748b;">${unit}</td>
-        <td style="padding:12px 20px;text-align:right;font-size:16px;color:#1a56db;font-weight:600;">${Number(d.rate).toLocaleString()} 원</td>
-        <td style="padding:12px 20px;text-align:right;font-size:13px;color:${changeColor};">${changeNum != null ? `${arrow} ${Math.abs(changeNum).toFixed(2)}` : ''}</td>
+        <td style="padding:12px 20px;text-align:right;font-size:16px;color:#1a56db;font-weight:600;">${Number(d.rate).toLocaleString('ko-KR', { maximumFractionDigits: 4 })} 원</td>
+        <td style="padding:12px 20px;text-align:right;font-size:13px;color:${changeColor};">${changeNum != null ? `${arrow} ${Math.abs(changeNum).toFixed(decimals)}` : ''}</td>
       </tr>`;
   }).join('');
 
