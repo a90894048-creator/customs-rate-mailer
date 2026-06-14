@@ -337,12 +337,14 @@ async function sendRateMail() {
   });
 
   try {
-    await transporter.sendMail({
-      from: `"관세청 환율 알림" <${config.gmailUser}>`,
-      to: emails.join(', '),
-      subject,
-      html,
-    });
+    for (const email of emails) {
+      await transporter.sendMail({
+        from: `"관세청 환율 알림" <${config.gmailUser}>`,
+        to: email,
+        subject,
+        html,
+      });
+    }
     console.log(`[${new Date().toLocaleString()}] 이메일 발송 완료 (Gmail) → ${emails.length}명`);
     return { ok: true, rates, recipients: emails.length };
   } catch (err) {
