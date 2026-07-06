@@ -122,7 +122,7 @@
 <body>
 
 <h1>📊 관세청 환율 자동 발송기</h1>
-<p class="subtitle">매주 금요일 11:00 AM · USD · CNY · JPY · EUR</p>
+<p class="subtitle">매주 금요일 11:00 AM · USD · CNY · JPY · EUR · GBP</p>
 
 <!-- 현재 환율 -->
 <div class="card">
@@ -132,6 +132,7 @@
     <div class="rate-box"><div class="currency">CNY</div><div class="value">-</div></div>
     <div class="rate-box"><div class="currency">JPY</div><div class="value">-</div></div>
     <div class="rate-box"><div class="currency">EUR</div><div class="value">-</div></div>
+    <div class="rate-box"><div class="currency">GBP</div><div class="value">-</div></div>
   </div>
   <button class="btn-primary" style="margin-top:14px;width:100%;" onclick="loadRates()">🔄 새로고침</button>
 </div>
@@ -180,7 +181,7 @@
     grid.classList.add('loading');
     try {
       const data = await fetch('/api/rates').then(r => r.json());
-      const currencies = ['USD', 'CNY', 'JPY', 'EUR'];
+      const currencies = ['USD', 'CNY', 'JPY', 'EUR', 'GBP'];
       const boxes = grid.querySelectorAll('.rate-box');
       currencies.forEach((c, i) => {
         const d = data[c];
