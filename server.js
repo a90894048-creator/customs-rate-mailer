@@ -68,7 +68,7 @@ async function fetchRatesFromClhs() {
   const period = periodMatch ? { from: periodMatch[1], to: periodMatch[2] } : null;
 
   const rates = {};
-  ['USD', 'CNY', 'JPY', 'EUR'].forEach(code => {
+  ['USD', 'CNY', 'JPY', 'EUR', 'GBP'].forEach(code => {
     // 통화 행: cur=USD 링크 뒤에 수출환율(#669900), 과세환율(#FF4646) 순서
     const rowRegex = new RegExp(
       `cur=${code}"[\\s\\S]{0,800}?#669900">([\\d.]+)<[\\s\\S]{0,300}?#FF4646">([\\d.]+)<`
@@ -136,7 +136,7 @@ async function fetchUnipassRatesForDate(apiKey, qryYymmDd) {
   const xml = res.data;
   const rates = {};
 
-  ['USD', 'CNY', 'JPY', 'EUR'].forEach(code => {
+  ['USD', 'CNY', 'JPY', 'EUR', 'GBP'].forEach(code => {
     const blockRegex = new RegExp(
       `<trifFxrtInfoQryRsltVo>(?:(?!<trifFxrtInfoQryRsltVo>).)*?<currSgn>${code}</currSgn>(?:(?!<trifFxrtInfoQryRsltVo>).)*?</trifFxrtInfoQryRsltVo>`,
       's'
@@ -219,7 +219,7 @@ function buildEmailHtml(rates, dateLabel) {
   const period = rates['USD']?.period;
   const periodStr = period ? `(${period.from} ~ ${period.to} 적용)` : '';
 
-  const rows = ['USD', 'CNY', 'JPY', 'EUR'].map(c => {
+  const rows = ['USD', 'CNY', 'JPY', 'EUR', 'GBP'].map(c => {
     const d = rates[c];
     if (!d) return `<tr><td style="padding:12px 20px;font-weight:bold;">${c}</td><td colspan="3" style="padding:12px 20px;color:#999;">데이터 없음</td></tr>`;
     const changeNum = d.change != null ? parseFloat(d.change) : null;
