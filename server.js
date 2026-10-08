@@ -14,6 +14,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const EMAILS_FILE = path.join(DATA_DIR, 'emails.json');
+const ACTIVE_EMAILS_FILE = path.join(DATA_DIR, 'emails-active.json');
 
 // Gmail 설정: 환경변수 우선, 없으면 로컬 파일(UI에서 저장)
 function getGmailConfig() {
@@ -50,8 +51,26 @@ function saveEmails(emails) {
   const envEmails = process.env.RECIPIENT_EMAILS
     ? process.env.RECIPIENT_EMAILS.split(',').map(e => e.trim()).filter(Boolean)
     : [];
-  // 환경변수 목록 제외한 나머지를 파일에 저장
   fs.writeFileSync(EMAILS_FILE, JSON.stringify(emails.filter(e => !envEmails.includes(e)), null, 2));
+}
+
+// 발송 활성화된 이메일 목록 (파일 없으면 전체 활성)
+function loadActiveEmails() {
+  if (fs.existsSync(ACTIVE_EMAILS_FILE)) {
+    try { return JSON.parse(fs.readFileSync(ACTIVE_EMAILS_FILE, 'utf-8')); } catch (e) {}
+  }
+  return loadEmails();
+}
+
+function saveActiveEmails(activeList) {
+  fs.writeFileSync(ACTIVE_EMAILS_FILE, JSON.stringify(activeList, null, 2));
+}
+
+// 전체 목록을 [{email, active}] 형태로 반환
+function loadEmailsWithActive() {
+  const all = loadEmails();
+  const active = new Set(loadActiveEmails());
+  return all.map(e => ({ email: e, active: active.has(e) }));
 }
 
 // 1순위: CLHS(clhs.co.kr) 통관환율 페이지 — 관세청 과세환율과 동일 수치, 해외 접근 가능
@@ -302,10 +321,10 @@ async function sendRateMail() {
     return { ok: false, error: 'Gmail 설정 없음' };
   }
 
-  const emails = loadEmails();
+  const emails = loadActiveEmails();
   if (emails.length === 0) {
-    console.log('수신자 없음');
-    return { ok: false, error: '수신자 없음' };
+    console.log('활성 수신자 없음');
+    return { ok: false, error: '발송 활성화된 수신자가 없습니다.' };
   }
 
   const rates = await fetchCustomsRates();
@@ -381,7 +400,7 @@ async function sendRateMail() {
 
 // --- API ---
 
-app.get('/api/emails', (req, res) => res.json(loadEmails()));
+app.get('/api/emails', (req, res) => res.json(loadEmailsWithActive()));
 
 app.post('/api/emails', (req, res) => {
   const { email } = req.body;
@@ -392,13 +411,25 @@ app.post('/api/emails', (req, res) => {
   if (list.includes(email)) return res.status(409).json({ error: '이미 등록된 이메일' });
   list.push(email);
   saveEmails(list);
-  res.json({ ok: true, emails: list });
+  // 새 이메일은 기본 활성
+  const active = loadActiveEmails();
+  if (!active.includes(email)) { active.push(email); saveActiveEmails(active); }
+  res.json({ ok: true, emails: loadEmailsWithActive() });
 });
 
 app.delete('/api/emails/:email', (req, res) => {
   const target = decodeURIComponent(req.params.email);
   saveEmails(loadEmails().filter(e => e !== target));
-  res.json({ ok: true, emails: loadEmails() });
+  saveActiveEmails(loadActiveEmails().filter(e => e !== target));
+  res.json({ ok: true, emails: loadEmailsWithActive() });
+});
+
+// 활성 수신자 목록 업데이트
+app.patch('/api/emails/active', (req, res) => {
+  const { activeEmails } = req.body;
+  if (!Array.isArray(activeEmails)) return res.status(400).json({ error: '잘못된 요청' });
+  saveActiveEmails(activeEmails);
+  res.json({ ok: true, emails: loadEmailsWithActive() });
 });
 
 function readConfigFile() {

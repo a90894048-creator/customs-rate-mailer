@@ -158,6 +158,13 @@
     <input type="email" id="newEmail" placeholder="추가할 이메일 주소" onkeydown="if(event.key==='Enter')addEmail()" />
     <button class="btn-primary" onclick="addEmail()">추가</button>
   </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;margin-bottom:4px;">
+    <span id="activeCount" style="font-size:12px;color:#64748b;"></span>
+    <div style="display:flex;gap:6px;">
+      <button style="padding:4px 10px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;cursor:pointer;" onclick="selectAll()">전체선택</button>
+      <button style="padding:4px 10px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;cursor:pointer;" onclick="deselectAll()">전체해제</button>
+    </div>
+  </div>
   <ul class="email-list" id="emailList"></ul>
   <div id="emailMsg" class="status-msg"></div>
 </div>
@@ -166,7 +173,7 @@
 <div class="card">
   <h2>📨 즉시 발송 테스트</h2>
   <p style="font-size:13px;color:#64748b;margin-bottom:12px;">
-    지금 바로 환율 이메일을 발송합니다. 설정된 수신자 전체에게 전송됩니다.
+    체크된 수신자에게만 발송됩니다. 자동 발송도 동일하게 적용됩니다.
   </p>
   <button class="btn-send" onclick="sendNow()">지금 발송하기</button>
   <div style="text-align:center;">
@@ -230,13 +237,52 @@
 
   function renderEmails(list) {
     const ul = document.getElementById('emailList');
+    const activeCount = list.filter(e => e.active).length;
+    document.getElementById('activeCount').textContent = `${list.length}명 중 ${activeCount}명 선택됨`;
     ul.innerHTML = list.length === 0
       ? '<li style="color:#94a3b8;font-size:13px;">등록된 수신자가 없습니다.</li>'
       : list.map(e => `
           <li>
-            <span>${e}</span>
-            <button class="btn-danger" onclick="removeEmail('${e}')">삭제</button>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;">
+              <input type="checkbox" ${e.active ? 'checked' : ''} onchange="toggleActive('${e.email}', this.checked)"
+                style="width:16px;height:16px;cursor:pointer;accent-color:#1a56db;" />
+              <span style="${e.active ? '' : 'color:#94a3b8;text-decoration:line-through;'}">${e.email}</span>
+            </label>
+            <button class="btn-danger" onclick="removeEmail('${e.email}')">삭제</button>
           </li>`).join('');
+  }
+
+  async function toggleActive(email, checked) {
+    const list = await fetch('/api/emails').then(r => r.json());
+    const activeEmails = list
+      .map(e => e.email === email ? { ...e, active: checked } : e)
+      .filter(e => e.active)
+      .map(e => e.email);
+    const res = await fetch('/api/emails/active', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeEmails })
+    }).then(r => r.json());
+    if (res.ok) renderEmails(res.emails);
+  }
+
+  async function selectAll() {
+    const list = await fetch('/api/emails').then(r => r.json());
+    const res = await fetch('/api/emails/active', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeEmails: list.map(e => e.email) })
+    }).then(r => r.json());
+    if (res.ok) renderEmails(res.emails);
+  }
+
+  async function deselectAll() {
+    const res = await fetch('/api/emails/active', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activeEmails: [] })
+    }).then(r => r.json());
+    if (res.ok) renderEmails(res.emails);
   }
 
   async function addEmail() {
@@ -248,7 +294,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     }).then(r => r.json());
-    if (res.ok) { input.value = ''; renderEmails(res.emails); showMsg('emailMsg', '✅ 추가됨', false); }
+    if (res.ok) { input.value = ''; renderEmails(res.emails); showMsg('emailMsg', '✅ 추가됨 (자동 선택)', false); }
     else showMsg('emailMsg', res.error, true);
   }
 
