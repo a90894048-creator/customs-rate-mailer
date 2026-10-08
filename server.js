@@ -154,12 +154,52 @@ async function fetchUnipassRatesForDate(apiKey, qryYymmDd) {
   return rates;
 }
 
-// 1순위: 유니패스 오픈API — 기준주 + 직전주 조회로 전주대비 계산
-// (금/토요일에는 다음주 환율을 조회하고, 직전주 = 이번주가 됨)
+// 환율 데이터를 rates 객체로 변환하는 헬퍼
+function buildRatesFromData(thisWeek, prevWeek) {
+  const rates = {};
+  Object.entries(thisWeek).forEach(([code, cur]) => {
+    const fromDate = `${cur.aplyBgnDt.slice(0, 4)}-${cur.aplyBgnDt.slice(4, 6)}-${cur.aplyBgnDt.slice(6, 8)}`;
+    const end = new Date(`${fromDate}T00:00:00+09:00`);
+    end.setDate(end.getDate() + 6);
+    const toDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    const prev = prevWeek[code]?.rate;
+    rates[code] = {
+      rate: cur.rate,
+      prev: prev ?? null,
+      change: prev != null ? +(cur.rate - prev).toFixed(4) : null,
+      period: { from: fromDate, to: toDate },
+    };
+  });
+  return Object.keys(rates).length > 0 ? rates : null;
+}
+
+// 1순위: 유니패스 오픈API
+// 항상 다음주 환율을 먼저 시도하고, 미고시면 이번주로 fallback
 async function fetchRatesFromUnipass() {
   const apiKey = getUnipassApiKey();
   if (!apiKey) throw new Error('유니패스 인증키가 설정되지 않았습니다 (UNIPASS_API_KEY)');
 
+  const now = new Date();
+  const day = now.getDay(); // 0=일 ~ 6=토
+
+  // 다음주 일요일
+  const nextSunday = new Date(now);
+  nextSunday.setDate(now.getDate() + (7 - day));
+
+  // 이번주 일요일 (다음주 환율 고시 시 전주 비교용)
+  const thisSunday = new Date(now);
+  thisSunday.setDate(now.getDate() - day);
+
+  // 다음주 환율 먼저 조회
+  const nextWeekData = await fetchUnipassRatesForDate(apiKey, formatYmd(nextSunday)).catch(() => ({}));
+
+  if (Object.keys(nextWeekData).length > 0) {
+    // 다음주 환율 이미 고시됨 → 이번주를 전주로 사용
+    const thisWeekData = await fetchUnipassRatesForDate(apiKey, formatYmd(thisSunday)).catch(() => ({}));
+    return buildRatesFromData(nextWeekData, thisWeekData);
+  }
+
+  // 다음주 미고시 → 이번주 환율 조회
   const target = getTargetDate();
   const lastWeek = new Date(target);
   lastWeek.setDate(lastWeek.getDate() - 7);
@@ -169,24 +209,7 @@ async function fetchRatesFromUnipass() {
     fetchUnipassRatesForDate(apiKey, formatYmd(lastWeek)).catch(() => ({})),
   ]);
 
-  const rates = {};
-  Object.entries(thisWeek).forEach(([code, cur]) => {
-    // 적용기간: 시작일(일요일)부터 6일 후(토요일)까지
-    const fromDate = `${cur.aplyBgnDt.slice(0, 4)}-${cur.aplyBgnDt.slice(4, 6)}-${cur.aplyBgnDt.slice(6, 8)}`;
-    const end = new Date(`${fromDate}T00:00:00+09:00`);
-    end.setDate(end.getDate() + 6);
-    const toDate = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
-
-    const prev = prevWeek[code]?.rate;
-    rates[code] = {
-      rate: cur.rate,
-      prev: prev ?? null,
-      change: prev != null ? +(cur.rate - prev).toFixed(4) : null,
-      period: { from: fromDate, to: toDate },
-    };
-  });
-
-  return Object.keys(rates).length > 0 ? rates : null;
+  return buildRatesFromData(thisWeek, prevWeek);
 }
 
 // 환율 조회: 유니패스 공식 API 우선, 실패 시 CLHS
@@ -288,12 +311,15 @@ async function sendRateMail() {
   const rates = await fetchCustomsRates();
   if (!rates) return { ok: false, error: '환율 데이터를 가져오지 못했습니다.' };
 
-  // 기준주 검증: 금/토요일에는 다음주 환율이어야 함 (고시 전이면 발송 보류)
-  const expectedFrom = getWeekStart(getTargetDate());
-  const actualFrom = rates['USD']?.period?.from;
-  if (actualFrom && actualFrom !== expectedFrom) {
-    console.log(`다음주 환율 미고시 (기대: ${expectedFrom}, 조회됨: ${actualFrom})`);
-    return { ok: false, notYet: true, error: `다음주 환율이 아직 고시되지 않았습니다 (${expectedFrom}부터 적용분). 고시되면 자동 재시도합니다.` };
+  // 기준주 검증: 금/토요일에만 다음주 환율 확인 (고시 전이면 발송 보류)
+  const nowDay = new Date().getDay();
+  if (nowDay === 5 || nowDay === 6) {
+    const expectedFrom = getWeekStart(getTargetDate());
+    const actualFrom = rates['USD']?.period?.from;
+    if (actualFrom && actualFrom !== expectedFrom) {
+      console.log(`다음주 환율 미고시 (기대: ${expectedFrom}, 조회됨: ${actualFrom})`);
+      return { ok: false, notYet: true, error: `다음주 환율이 아직 고시되지 않았습니다 (${expectedFrom}부터 적용분). 고시되면 자동 재시도합니다.` };
+    }
   }
 
   const now = new Date();
